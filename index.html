@@ -1,0 +1,848 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Matrix Raster Generator - Drag & Drop</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            /* Hintergrund: Ein tiefer blauer Verlauf */
+            background: radial-gradient(circle at center, #001e45 0%, #000510 100%);
+            color: #ccfbf1; 
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+            overflow: hidden;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+
+        canvas {
+            background-color: transparent; 
+            touch-action: none; 
+            position: absolute;
+            top: 0;
+            left: 0;
+            z-index: 1;
+        }
+
+        /* Overlay für Drag & Drop */
+        #dropOverlay {
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(34, 211, 238, 0.2);
+            border: 4px dashed #22d3ee;
+            z-index: 100;
+            display: none;
+            justify-content: center;
+            align-items: center;
+            pointer-events: none;
+        }
+        #dropOverlay h1 {
+            font-family: monospace;
+            font-size: 3rem;
+            color: #fff;
+            text-shadow: 0 0 20px #22d3ee;
+            background: rgba(0,0,0,0.5);
+            padding: 20px;
+            border-radius: 10px;
+        }
+
+        /* UI Styles */
+        .ui-sidebar {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            display: flex;
+            flex-direction: column-reverse; 
+            gap: 15px;
+            width: 320px;
+            z-index: 10;
+            pointer-events: none; 
+        }
+
+        .panel {
+            background: rgba(0, 5, 16, 0.85);
+            backdrop-filter: blur(12px);
+            padding: 16px;
+            border-radius: 8px;
+            border: 1px solid #083344;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.8);
+            pointer-events: auto; 
+        }
+
+        .main-controls {
+            max-height: 60vh;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .color-panel {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            border: 1px solid #22d3ee55; 
+        }
+
+        .control-group {
+            display: flex;
+            flex-direction: column;
+        }
+        
+        /* Hilfsklasse zum Ausblenden */
+        .hidden {
+            display: none !important;
+        }
+
+        .row { display: flex; justify-content: space-between; align-items: center; gap: 10px; min-height: 24px; }
+        .row-left { display: flex; align-items: center; gap: 8px; }
+        .row-right { display: flex; align-items: center; gap: 12px; }
+
+        label {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.8rem;
+            color: #94a3b8;
+            font-family: monospace;
+            margin-bottom: 4px;
+            width: 100%;
+        }
+
+        .lbl-inline { font-size: 0.8rem; color: #ccfbf1; font-weight: bold; font-family: monospace; cursor: pointer; }
+        .lbl-sub { font-size: 0.7rem; color: #22d3ee; cursor: pointer; }
+
+        span.value { color: #22d3ee; font-weight: bold; text-shadow: 0 0 10px rgba(34, 211, 238, 0.4); }
+
+        input[type=range] {
+            -webkit-appearance: none; width: 100%; height: 4px; background: #1e293b; border-radius: 2px; outline: none;
+        }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none; width: 14px; height: 14px; border-radius: 2px; background: #22d3ee; cursor: pointer;
+            box-shadow: 0 0 10px rgba(34, 211, 238, 0.5);
+        }
+        input[type=checkbox] { accent-color: #22d3ee; width: 16px; height: 16px; cursor: pointer; }
+        
+        input[type=color] { -webkit-appearance: none; border: none; width: 100%; height: 24px; border-radius: 4px; cursor: pointer; padding: 0; background: none; }
+        input[type=color]::-webkit-color-swatch-wrapper { padding: 0; }
+        input[type=color]::-webkit-color-swatch { border: 1px solid #334155; border-radius: 4px; }
+
+        button {
+            background: linear-gradient(135deg, #06b6d4, #22d3ee);
+            color: #000510; border: none; padding: 8px 12px; border-radius: 4px;
+            font-weight: bold; font-size: 0.8rem; cursor: pointer;
+            font-family: monospace; text-transform: uppercase; width: 100%;
+            box-shadow: 0 0 15px rgba(6, 182, 212, 0.3);
+            margin-top: 5px;
+        }
+        button:hover { filter: brightness(1.1); }
+        button.secondary {
+            background: transparent; border: 1px solid #ef4444; color: #ef4444; box-shadow: none;
+        }
+        button.secondary:hover { background: #ef444422; filter: none; }
+
+        .divider { height: 1px; background-color: #1e293b; margin: 5px 0; width: 100%; }
+
+        /* Scrollbar */
+        .main-controls::-webkit-scrollbar { width: 6px; }
+        .main-controls::-webkit-scrollbar-track { background: #000510; }
+        .main-controls::-webkit-scrollbar-thumb { background: #1e293b; border-radius: 3px; }
+    </style>
+</head>
+<body>
+
+    <div id="dropOverlay">
+        <h1>DROP IMAGE HERE</h1>
+    </div>
+
+    <canvas id="mainCanvas"></canvas>
+
+    <div class="ui-sidebar">
+        
+        <!-- MAIN CONTROLS (Unten) -->
+        <div class="panel main-controls">
+
+            <!-- MODE HEADER -->
+            <div class="row" style="margin-bottom: 10px;">
+                <span id="modeLabel" class="lbl-inline" style="color:#fcd34d">Modus: MOND</span>
+                <button id="resetImgBtn" class="secondary hidden" style="width: auto; padding: 2px 8px; margin:0; font-size:0.7rem;">X Bild löschen</button>
+            </div>
+
+            <!-- === IMAGE CONTROLS (Nur sichtbar wenn Bild geladen) === -->
+            <div id="imageControls" class="hidden">
+                <div class="control-group">
+                    <label>
+                        Bild Scale
+                        <span id="imgScaleVal" class="value">1.0</span>
+                    </label>
+                    <input type="range" id="imgScaleSlider" min="10" max="500" value="100">
+                </div>
+                <div class="control-group">
+                    <label>
+                        Pos X
+                        <span id="imgXVal" class="value">0</span>
+                    </label>
+                    <input type="range" id="imgXSlider" min="-1000" max="1000" value="0">
+                </div>
+                <div class="control-group">
+                    <label>
+                        Pos Y
+                        <span id="imgYVal" class="value">0</span>
+                    </label>
+                    <input type="range" id="imgYSlider" min="-1000" max="1000" value="0">
+                </div>
+                 <!-- Invert Checkbox -->
+                <div class="row" style="margin-top:5px;">
+                     <label for="invertCheck" class="lbl-inline" style="font-weight:normal; color:#94a3b8;">Farben invertieren</label>
+                     <input type="checkbox" id="invertCheck">
+                </div>
+                <!-- Hard Threshold Checkbox -->
+                <div class="row">
+                     <label for="hardThresholdCheck" class="lbl-inline" style="font-weight:normal; color:#94a3b8;">Hartes Schwarz/Weiß</label>
+                     <input type="checkbox" id="hardThresholdCheck">
+                </div>
+                <div class="divider"></div>
+            </div>
+
+            <!-- === MOON CONTROLS (Standard) === -->
+            <div id="moonControls">
+                <!-- Rotation -->
+                <div class="control-group">
+                    <label>Rotation <span id="angleVal" class="value">160°</span></label>
+                    <input type="range" id="angleSlider" min="0" max="360" step="0.1" value="160">
+                </div>
+                <!-- Sichel Breite -->
+                <div class="control-group">
+                    <label>Sichel-Breite <span id="crescentVal" class="value">0.6</span></label>
+                    <input type="range" id="crescentSlider" min="40" max="150" value="60">
+                </div>
+                <!-- Verlaufshärte -->
+                <div class="control-group">
+                    <label>Verlaufshärte <span id="hardnessVal" class="value">50%</span></label>
+                    <input type="range" id="hardnessSlider" min="0" max="100" value="50">
+                </div>
+                <!-- Organik / Rauschen -->
+                <div class="control-group">
+                    <label>Organisches Ausfransen <span id="noiseVal" class="value">60%</span></label>
+                    <input type="range" id="noiseSlider" min="0" max="100" value="60">
+                </div>
+                <div class="divider"></div>
+            </div>
+
+            <!-- === GLOBAL CONTROLS (Immer sichtbar) === -->
+
+            <!-- Raster Abstand -->
+            <div class="control-group">
+                <label>Raster-Abstand <span id="spacingVal" class="value">15px</span></label>
+                <input type="range" id="spacingSlider" min="5" max="60" value="15">
+            </div>
+
+             <!-- Max Größe -->
+             <div class="control-group">
+                <label>Max. Größe <span id="maxSizeVal" class="value">90%</span></label>
+                <input type="range" id="maxSizeSlider" min="10" max="300" value="90">
+            </div>
+
+            <!-- Helligkeit Modus -->
+            <div class="row">
+                <label for="sizeModeCheck" class="lbl-inline" style="font-weight:normal; color:#94a3b8;">Größe steuert Helligkeit</label>
+                <input type="checkbox" id="sizeModeCheck">
+            </div>
+
+            <div class="divider"></div>
+
+            <!-- Connections -->
+            <div class="row">
+                <div class="row-left">
+                    <label for="connCheck" class="lbl-inline">Connections</label>
+                    <input type="checkbox" id="connCheck">
+                </div>
+                <div class="row-right">
+                    <label for="randConnCheck" class="lbl-sub">Random</label>
+                    <input type="checkbox" id="randConnCheck">
+                </div>
+            </div>
+
+            <!-- Connection Settings -->
+            <div class="control-group">
+                <label>Conn Dist (Faktor) <span id="connFactorVal" class="value">1.5x</span></label>
+                <input type="range" id="connFactorSlider" min="10" max="50" value="18">
+            </div>
+            
+            <div class="control-group">
+                <label>Anzahl Linien (Max) <span id="maxLinesVal" class="value">3</span></label>
+                <input type="range" id="maxLinesSlider" min="1" max="10" value="3">
+            </div>
+
+            <div class="divider"></div>
+
+            <!-- Export -->
+            <div class="row">
+                <button onclick="exportSVG()">SVG Export</button>
+                <div style="display:flex; align-items:center; gap:5px;">
+                    <input type="checkbox" id="bgExportCheck" checked>
+                    <label for="bgExportCheck" style="margin:0; font-size:0.7rem; width:auto;">Hintergrund</label>
+                </div>
+            </div>
+        </div>
+
+        <!-- COLOR PANEL -->
+        <div class="panel color-panel">
+            <div class="row">
+                <div class="row-left">
+                    <label for="multiColorCheck" class="lbl-inline">Colors</label>
+                    <input type="checkbox" id="multiColorCheck">
+                </div>
+                <div class="row-right">
+                     <label for="cloudsColorCheck" class="lbl-sub">Clouds</label>
+                     <input type="checkbox" id="cloudsColorCheck">
+                     <label for="randColorCheck" class="lbl-sub">Random</label>
+                     <input type="checkbox" id="randColorCheck">
+                </div>
+            </div>
+
+            <div class="row" style="gap:5px;">
+                <input type="color" id="color1" value="#00c167" title="Color 1">
+                <input type="color" id="color2" value="#008cff" title="Color 2">
+                <input type="color" id="color3" value="#ffa6b4" title="Color 3">
+                <input type="color" id="color4" value="#822faa" title="Color 4">
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        const canvas = document.getElementById('mainCanvas');
+        const ctx = canvas.getContext('2d');
+        const dropOverlay = document.getElementById('dropOverlay');
+        
+        // --- DATA STATE ---
+        // Speichert das geladene Bild und dessen Daten
+        let loadedImage = null; // Image Object
+        let imagePixelData = null; // Uint8ClampedArray
+        let imageWidth = 0;
+        let imageHeight = 0;
+        let isImageMode = false;
+        
+        // UI Container
+        const uiGroups = {
+            moon: document.getElementById('moonControls'),
+            image: document.getElementById('imageControls'),
+            modeLabel: document.getElementById('modeLabel'),
+            resetBtn: document.getElementById('resetImgBtn')
+        };
+
+        // UI Elemente
+        const els = {
+            angle: { input: document.getElementById('angleSlider'), display: document.getElementById('angleVal') },
+            crescent: { input: document.getElementById('crescentSlider'), display: document.getElementById('crescentVal') },
+            hardness: { input: document.getElementById('hardnessSlider'), display: document.getElementById('hardnessVal') },
+            spacing: { input: document.getElementById('spacingSlider'), display: document.getElementById('spacingVal') },
+            maxSize: { input: document.getElementById('maxSizeSlider'), display: document.getElementById('maxSizeVal') },
+            noise: { input: document.getElementById('noiseSlider'), display: document.getElementById('noiseVal') },
+            sizeMode: document.getElementById('sizeModeCheck'),
+            // Connection
+            conn: document.getElementById('connCheck'),
+            connRandom: document.getElementById('randConnCheck'),
+            connFactor: { input: document.getElementById('connFactorSlider'), display: document.getElementById('connFactorVal') },
+            maxLines: { input: document.getElementById('maxLinesSlider'), display: document.getElementById('maxLinesVal') },
+            bgExport: document.getElementById('bgExportCheck'),
+            // Image Controls
+            imgScale: { input: document.getElementById('imgScaleSlider'), display: document.getElementById('imgScaleVal') },
+            imgX: { input: document.getElementById('imgXSlider'), display: document.getElementById('imgXVal') },
+            imgY: { input: document.getElementById('imgYSlider'), display: document.getElementById('imgYVal') },
+            imgInvert: document.getElementById('invertCheck'),
+            imgHardThreshold: document.getElementById('hardThresholdCheck'),
+            // Color Elements
+            multiColor: document.getElementById('multiColorCheck'),
+            randColor: document.getElementById('randColorCheck'),
+            cloudsColor: document.getElementById('cloudsColorCheck'),
+            colors: [
+                document.getElementById('color1'), document.getElementById('color2'),
+                document.getElementById('color3'), document.getElementById('color4')
+            ]
+        };
+
+        let width, height, minDim;
+        const dpr = window.devicePixelRatio || 1;
+
+        function resize() {
+            width = window.innerWidth;
+            height = window.innerHeight;
+            minDim = Math.min(width, height);
+            
+            canvas.width = width * dpr;
+            canvas.height = height * dpr;
+            
+            canvas.style.width = `${width}px`;
+            canvas.style.height = `${height}px`;
+            
+            ctx.scale(dpr, dpr);
+            render();
+        }
+
+        // --- HELPER FUNCTIONS ---
+
+        function pseudoRandom(x, y) {
+            return Math.abs(Math.sin(x * 12.9898 + y * 78.233) * 43758.5453) % 1;
+        }
+
+        function cloudNoise(x, y) {
+            const scale = 0.003;
+            const v1 = Math.sin(x * scale + y * scale * 0.5);
+            const v2 = Math.cos(x * scale * 0.5 - y * scale);
+            const v3 = Math.sin(x * scale * 0.2 + y * scale * 0.2 + 2);
+            return ((v1 + v2 + v3) / 3) * 0.5 + 0.5;
+        }
+
+        function hexToRgb(hex) {
+            const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+            return result ? [
+                parseInt(result[1], 16), parseInt(result[2], 16), parseInt(result[3], 16)
+            ] : [0, 255, 255];
+        }
+
+        function getGradientColor(t, colors) {
+            t = Math.max(0, Math.min(1, t));
+            let c1, c2, localT;
+            if (t < 0.33) {
+                c1 = colors[0]; c2 = colors[1]; localT = t / 0.33;
+            } else if (t < 0.66) {
+                c1 = colors[1]; c2 = colors[2]; localT = (t - 0.33) / 0.33;
+            } else {
+                c1 = colors[2]; c2 = colors[3]; localT = (t - 0.66) / 0.34;
+            }
+            const r = Math.round(c1[0] + (c2[0] - c1[0]) * localT);
+            const g = Math.round(c1[1] + (c2[1] - c1[1]) * localT);
+            const b = Math.round(c1[2] + (c2[2] - c1[2]) * localT);
+            return [r, g, b];
+        }
+
+        const COLOR_CYAN_RGB = [0, 255, 255]; 
+
+        // --- DRAWING LOGIC ---
+
+        function getPlusPathData(x, y, scale, spacing, maxSizeFactor) {
+            const maxSize = spacing * maxSizeFactor; 
+            const size = maxSize * scale;
+            const s = size / 2;
+            const t = Math.max(0.5, size * 0.15); 
+            return `M ${x-t} ${y-s} L ${x+t} ${y-s} L ${x+t} ${y-t} L ${x+s} ${y-t} L ${x+s} ${y+t} L ${x+t} ${y+t} L ${x+t} ${y+s} L ${x-t} ${y+s} L ${x-t} ${y+t} L ${x-s} ${y+t} L ${x-s} ${y-t} L ${x-t} ${y-t} Z`; 
+        }
+
+        function drawSinglePathPlus(x, y, scale, spacing, sizeMode, maxSizeFactor, colorRgb) {
+            ctx.beginPath();
+            let drawScale = scale;
+            let alpha = scale;
+
+            if (sizeMode) {
+                alpha = 1.0;
+                drawScale = Math.pow(scale, 1.5); 
+            }
+            
+            ctx.fillStyle = `rgba(${colorRgb[0]}, ${colorRgb[1]}, ${colorRgb[2]}, ${alpha})`;
+            const maxSize = spacing * maxSizeFactor; 
+            const size = maxSize * drawScale;
+            const s = size / 2;
+            const t = Math.max(0.5, size * 0.15); 
+
+            ctx.moveTo(x - t, y - s); ctx.lineTo(x + t, y - s); ctx.lineTo(x + t, y - t); 
+            ctx.lineTo(x + s, y - t); ctx.lineTo(x + s, y + t); ctx.lineTo(x + t, y + t); 
+            ctx.lineTo(x + t, y + s); ctx.lineTo(x - t, y + s); ctx.lineTo(x - t, y + t); 
+            ctx.lineTo(x - s, y + t); ctx.lineTo(x - s, y - t); ctx.lineTo(x - t, y - t); 
+            ctx.closePath();
+            ctx.fill();
+        }
+
+        // --- CORE CALCULATION ---
+
+        function getRenderData() {
+            // Common Settings
+            const spacing = parseInt(els.spacing.input.value);
+            const maxSizeFactor = parseInt(els.maxSize.input.value) / 100; 
+            const sizeMode = els.sizeMode.checked;
+            const showConn = els.conn.checked;
+            const randomConn = els.connRandom.checked;
+            const connFactor = parseInt(els.connFactor.input.value) / 10; 
+            const maxLines = parseInt(els.maxLines.input.value);
+            const connDist = spacing * connFactor; 
+            
+            // Colors
+            const isMultiColor = els.multiColor.checked;
+            const isRandomColor = els.randColor.checked;
+            const isCloudsColor = els.cloudsColor.checked;
+            const activeColors = els.colors.map(el => hexToRgb(el.value));
+
+            let points = [];
+
+            // Scan Grid Loop
+            // Wir scannen über den gesamten Bildschirm
+            const cols = Math.ceil(width / spacing);
+            const rows = Math.ceil(height / spacing);
+
+            // Vars für Moon Logic
+            const centerX = width / 2;
+            const centerY = height / 2;
+            const moonRadius = minDim * 0.35; 
+            
+            // Vars für Image Logic
+            let imgScaleVal, imgXVal, imgYVal, invert, isHardThreshold;
+            if(isImageMode) {
+                imgScaleVal = parseInt(els.imgScale.input.value) / 100;
+                imgXVal = parseInt(els.imgX.input.value);
+                imgYVal = parseInt(els.imgY.input.value);
+                invert = els.imgInvert.checked;
+                isHardThreshold = els.imgHardThreshold.checked;
+            } else {
+                // Moon Specific Inputs
+                var angleDeg = parseFloat(els.angle.input.value);
+                var crescentFactor = parseInt(els.crescent.input.value) / 100; 
+                var noiseFactor = parseInt(els.noise.input.value) / 100;
+                var hardnessFactor = parseInt(els.hardness.input.value) / 100; 
+                
+                var shadowOffset = moonRadius * crescentFactor; 
+                var blurFactor = 1.5 - (hardnessFactor * 1.4); 
+                var blurSize = moonRadius * blurFactor;
+                var angleRad = (angleDeg * Math.PI) / 180;
+                var shadowX = centerX - Math.cos(angleRad) * shadowOffset;
+                var shadowY = centerY - Math.sin(angleRad) * shadowOffset;
+            }
+
+            for (let i = 0; i <= cols; i++) {
+                for (let j = 0; j <= rows; j++) {
+                    const x = i * spacing;
+                    const y = j * spacing;
+                    let intensity = 0;
+
+                    // --- MODE SWITCH ---
+                    if (isImageMode && imagePixelData) {
+                        // 1. Koordinaten transformieren (Screen -> Image)
+                        // Center of scaling should be center of screen
+                        const relX = (x - centerX - imgXVal) / imgScaleVal + (imageWidth / 2);
+                        const relY = (y - centerY - imgYVal) / imgScaleVal + (imageHeight / 2);
+
+                        // Check bounds
+                        if (relX >= 0 && relX < imageWidth && relY >= 0 && relY < imageHeight) {
+                            const px = Math.floor(relX);
+                            const py = Math.floor(relY);
+                            const idx = (py * imageWidth + px) * 4;
+
+                            // Helligkeit berechnen
+                            const r = imagePixelData[idx];
+                            const g = imagePixelData[idx+1];
+                            const b = imagePixelData[idx+2];
+                            const a = imagePixelData[idx+3];
+
+                            // Transparenz Check: Wenn Alpha gering, dann unsichtbar
+                            if (a < 50) {
+                                intensity = 0;
+                            } else {
+                                const bright = (r + g + b) / 3;
+                                
+                                // Helligkeit in Intensität umwandeln (0..1)
+                                // Standard: Schwarz (0) = Sichtbar (1.0), Weiß (255) = Unsichtbar (0.0)
+                                let val = 1.0 - (bright / 255.0);
+
+                                // Invert Logic: Weiß = Sichtbar
+                                if (invert) val = 1.0 - val;
+
+                                // Hard Threshold Logic
+                                if (isHardThreshold) {
+                                    val = val > 0.5 ? 1.0 : 0.0;
+                                }
+                                intensity = val;
+                            }
+                        }
+
+                    } else {
+                        // --- MOON LOGIC ---
+                        const distToCenter = Math.hypot(x - centerX, y - centerY);
+                        if (distToCenter > moonRadius) continue; // Außerhalb Mondkreis
+
+                        const distToShadow = Math.hypot(x - shadowX, y - shadowY);
+                        intensity = (distToShadow - (moonRadius - blurSize * 0.5)) / blurSize;
+                        intensity = Math.max(0, Math.min(1, intensity));
+
+                        // Noise Removal
+                        if (intensity < 0.95) {
+                            const rand = pseudoRandom(i, j);
+                            const noiseMod = 1.0 - (hardnessFactor * 0.5); 
+                            const dropoutThreshold = (1 - intensity) * noiseFactor * 2.0 * noiseMod;
+                            if (rand < dropoutThreshold) intensity = 0; 
+                            else if (noiseFactor > 0) intensity *= (1 - (rand * noiseFactor * 0.3));
+                        }
+                    }
+
+                    // Punkt hinzufügen, wenn sichtbar
+                    if (intensity > 0.05) {
+                        let ptColor = COLOR_CYAN_RGB;
+                        if (isMultiColor) {
+                            if (isRandomColor) {
+                                const randVal = pseudoRandom(i * 13, j * 7);
+                                const index = Math.floor(randVal * 4);
+                                ptColor = activeColors[index];
+                            } else if (isCloudsColor) {
+                                const t = cloudNoise(x, y);
+                                ptColor = getGradientColor(t, activeColors);
+                            } else {
+                                let t = x / width;
+                                ptColor = getGradientColor(t, activeColors);
+                            }
+                        }
+                        points.push({x, y, intensity, spacing, color: ptColor});
+                    }
+                }
+            }
+            return { points, sizeMode, width, height, maxSizeFactor, showConn, connDist, randomConn, maxLines };
+        }
+
+        function calculateConnections(data) {
+            const lines = [];
+            const maxDist = data.connDist;
+            
+            for (let i = 0; i < data.points.length; i++) {
+                const p1 = data.points[i];
+                let candidates = [];
+                
+                for (let j = i + 1; j < data.points.length; j++) {
+                    const p2 = data.points[j];
+                    const dx = p2.x - p1.x;
+                    if (dx > maxDist) break; // Optimization da sortiert nach x
+                    
+                    const dy = Math.abs(p2.y - p1.y);
+                    if (dy > maxDist) continue;
+
+                    const dist = Math.hypot(dx, dy);
+                    if (dist <= maxDist) {
+                        candidates.push({ point: p2, dist: dist });
+                    }
+                }
+
+                if (candidates.length === 0) continue;
+
+                if (data.randomConn) {
+                    candidates.sort((a, b) => {
+                        const rA = pseudoRandom(p1.x + a.point.x, p1.y + a.point.y);
+                        const rB = pseudoRandom(p1.x + b.point.x, p1.y + b.point.y);
+                        return rA - rB;
+                    });
+                } else {
+                    candidates.sort((a, b) => a.dist - b.dist);
+                }
+
+                const count = Math.min(candidates.length, data.maxLines);
+                for(let k=0; k < count; k++) {
+                    lines.push({
+                        p1: p1, p2: candidates[k].point,
+                        opacity: (1 - candidates[k].dist / maxDist) * 0.4
+                    });
+                }
+            }
+            return lines;
+        }
+
+        function render() {
+            // UI Update Display Values
+            if(isImageMode) {
+                 els.imgScale.display.innerText = (els.imgScale.input.value / 100).toFixed(1) + "x";
+                 els.imgX.display.innerText = els.imgX.input.value;
+                 els.imgY.display.innerText = els.imgY.input.value;
+            } else {
+                els.angle.display.innerText = parseFloat(els.angle.input.value).toFixed(0) + "°";
+                els.crescent.display.innerText = (parseInt(els.crescent.input.value) / 100).toFixed(1);
+                els.hardness.display.innerText = els.hardness.input.value + "%";
+                els.noise.display.innerText = els.noise.input.value + "%";
+            }
+            els.spacing.display.innerText = els.spacing.input.value + "px";
+            els.maxSize.display.innerText = els.maxSize.input.value + "%";
+            els.maxLines.display.innerText = els.maxLines.input.value;
+            els.connFactor.display.innerText = (parseInt(els.connFactor.input.value) / 10).toFixed(1) + "x";
+
+            ctx.clearRect(0, 0, width, height);
+            const data = getRenderData();
+            
+            // 1. Draw Connections
+            if (data.showConn) {
+                const lines = calculateConnections(data);
+                ctx.lineWidth = 0.5;
+                lines.forEach(line => {
+                    ctx.beginPath();
+                    const c = line.p1.color;
+                    ctx.strokeStyle = `rgba(${c[0]}, ${c[1]}, ${c[2]}, ${line.opacity})`;
+                    ctx.moveTo(line.p1.x, line.p1.y);
+                    ctx.lineTo(line.p2.x, line.p2.y);
+                    ctx.stroke();
+                });
+            }
+
+            // 2. Draw Symbols
+            data.points.forEach(p => {
+                drawSinglePathPlus(p.x, p.y, p.intensity, p.spacing, data.sizeMode, data.maxSizeFactor, p.color);
+            });
+        }
+
+        function exportSVG() {
+            const data = getRenderData();
+            const includeBg = els.bgExport.checked;
+            
+            let svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${data.width} ${data.height}" width="${data.width}px" height="${data.height}px">`;
+            
+            if (includeBg) {
+                svg += `
+                <defs>
+                    <radialGradient id="bgGrad" cx="50%" cy="50%" r="71%" fx="50%" fy="50%">
+                        <stop offset="0%" style="stop-color:#001e45;stop-opacity:1" />
+                        <stop offset="100%" style="stop-color:#000510;stop-opacity:1" />
+                    </radialGradient>
+                </defs>
+                <rect width="100%" height="100%" fill="url(#bgGrad)"/>`;
+            }
+
+            if (data.showConn) {
+                const lines = calculateConnections(data);
+                lines.forEach(line => {
+                     const op = line.opacity.toFixed(3);
+                     const c = line.p1.color;
+                     const colStr = `rgb(${c[0]},${c[1]},${c[2]})`;
+                     svg += `<line x1="${line.p1.x}" y1="${line.p1.y}" x2="${line.p2.x}" y2="${line.p2.y}" stroke="${colStr}" stroke-opacity="${op}" stroke-width="0.5" />`;
+                });
+            }
+
+            data.points.forEach(p => {
+                let drawScale = p.intensity;
+                let opacity = p.intensity.toFixed(2);
+                let fill = `rgb(${p.color[0]}, ${p.color[1]}, ${p.color[2]})`;
+                if (data.sizeMode) {
+                    opacity = "1";
+                    drawScale = Math.pow(p.intensity, 1.5);
+                }
+                const d = getPlusPathData(p.x, p.y, drawScale, p.spacing, data.maxSizeFactor);
+                const opacityAttr = opacity === "1" ? "" : `fill-opacity="${opacity}"`;
+                svg += `<path d="${d}" fill="${fill}" ${opacityAttr} />`;
+            });
+
+            svg += `</svg>`;
+            const blob = new Blob([svg], {type: "image/svg+xml;charset=utf-8"});
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement("a");
+            link.href = url;
+            link.download = `raster_export_${Date.now()}.svg`;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
+
+        // --- DRAG & DROP LOGIC ---
+        
+        // Prevent defaults
+        ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+            document.body.addEventListener(eventName, preventDefaults, false);
+        });
+        function preventDefaults(e) { e.preventDefault(); e.stopPropagation(); }
+
+        // Highlight
+        document.body.addEventListener('dragenter', () => dropOverlay.style.display = 'flex');
+        document.body.addEventListener('dragleave', (e) => {
+            if(e.relatedTarget === null) dropOverlay.style.display = 'none';
+        });
+
+        // Drop
+        document.body.addEventListener('drop', handleDrop, false);
+
+        function handleDrop(e) {
+            dropOverlay.style.display = 'none';
+            const dt = e.dataTransfer;
+            const files = dt.files;
+            if(files.length > 0) handleFiles(files[0]);
+        }
+
+        function handleFiles(file) {
+            if(!file.type.startsWith('image/')) return;
+            
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                const img = new Image();
+                img.onload = () => {
+                    // Bild geladen
+                    loadedImage = img;
+                    
+                    // FORCE EVEN DIMENSIONS to prevent edge artifacts
+                    let w = img.width;
+                    let h = img.height;
+                    if(w % 2 !== 0) w -= 1;
+                    if(h % 2 !== 0) h -= 1;
+                    
+                    imageWidth = w;
+                    imageHeight = h;
+                    
+                    // Extrahiere Pixel Daten auf temporäres Canvas
+                    const tmpC = document.createElement('canvas');
+                    tmpC.width = imageWidth;
+                    tmpC.height = imageHeight;
+                    const tmpCtx = tmpC.getContext('2d');
+                    // Draw clipped to even dimensions
+                    tmpCtx.drawImage(img, 0, 0, imageWidth, imageHeight, 0, 0, imageWidth, imageHeight);
+                    
+                    // Hole Array (r,g,b,a, r,g,b,a...)
+                    imagePixelData = tmpCtx.getImageData(0,0, imageWidth, imageHeight).data;
+                    
+                    activateImageMode();
+                };
+                img.src = e.target.result;
+            };
+            reader.readAsDataURL(file);
+        }
+
+        function activateImageMode() {
+            isImageMode = true;
+            uiGroups.moon.classList.add('hidden');
+            uiGroups.image.classList.remove('hidden');
+            uiGroups.resetBtn.classList.remove('hidden');
+            uiGroups.modeLabel.innerText = "Modus: BILD";
+            uiGroups.modeLabel.style.color = "#22d3ee";
+            
+            // Setze Slider zurück auf sinnvolle Defaults
+            els.imgScale.input.value = 100; // 1.0
+            els.imgX.input.value = 0;
+            els.imgY.input.value = 0;
+            
+            render();
+        }
+
+        uiGroups.resetBtn.addEventListener('click', () => {
+            isImageMode = false;
+            loadedImage = null;
+            imagePixelData = null;
+            uiGroups.image.classList.add('hidden');
+            uiGroups.moon.classList.remove('hidden');
+            uiGroups.resetBtn.classList.add('hidden');
+            uiGroups.modeLabel.innerText = "Modus: MOND";
+            uiGroups.modeLabel.style.color = "#fcd34d";
+            render();
+        });
+
+        // --- INIT & EVENTS ---
+
+        window.addEventListener('resize', resize);
+        function queueRender() {
+            render();
+        }
+
+        Object.values(els).forEach(el => {
+            if (Array.isArray(el)) {
+                el.forEach(c => c.addEventListener('input', queueRender));
+            } else {
+                if(el.input) el.input.addEventListener('input', queueRender);
+                else el.addEventListener('change', queueRender); 
+            }
+        });
+
+        setTimeout(resize, 100); 
+    </script>
+</body>
+</html>

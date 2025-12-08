@@ -204,8 +204,18 @@
                     <option value="linear">Linear</option>
                 </select>
             </div>
+            
+            <!-- Randomness Checkbox & Slider -->
+            <div class="row">
+                <label for="randomSizeCheck" class="lbl-inline" style="font-weight:normal; color:#94a3b8;">Randomness (Linear)</label>
+                <input type="checkbox" id="randomSizeCheck">
+            </div>
+            <div class="control-group hidden" id="randomStrengthGroup" style="margin-top:2px; padding-left:10px; border-left: 2px solid #22d3ee33;">
+                <label>Random Stärke <span id="randomStrengthVal" class="value">50%</span></label>
+                <input type="range" id="randomStrengthSlider" min="0" max="100" value="50">
+            </div>
 
-            <div class="control-group">
+            <div class="control-group" style="margin-top:10px;">
                 <label>Max Größe <span id="maxSizeVal" class="value">90%</span></label>
                 <input type="range" id="maxSizeSlider" min="10" max="300" value="150">
             </div>
@@ -328,6 +338,8 @@
             noise: { input: document.getElementById('noiseSlider'), display: document.getElementById('noiseVal') },
             sizeMode: document.getElementById('sizeModeCheck'),
             rasterMode: document.getElementById('rasterModeSelect'),
+            randomSize: document.getElementById('randomSizeCheck'),
+            randomStrength: { input: document.getElementById('randomStrengthSlider'), display: document.getElementById('randomStrengthVal'), group: document.getElementById('randomStrengthGroup') },
             conn: document.getElementById('connCheck'),
             connRandom: document.getElementById('randConnCheck'),
             connFactor: { input: document.getElementById('connFactorSlider'), display: document.getElementById('connFactorVal') },
@@ -404,6 +416,16 @@
         });
         els.gradCount.addEventListener('change', () => { updateGradientUI(); queueRender(); });
 
+        // Random Size Checkbox Logic
+        els.randomSize.addEventListener('change', () => {
+            if (els.randomSize.checked) {
+                els.randomStrength.group.classList.remove('hidden');
+            } else {
+                els.randomStrength.group.classList.add('hidden');
+            }
+            queueRender();
+        });
+
         function updateGradientUI() {
             if(els.gradientColor.checked) {
                 els.gradCount.style.display = 'block';
@@ -434,18 +456,13 @@
 
         // FIXED: Safe OKLCH Gradient with Sanitizer
         function getOklchGradientColor(t, colorsToUse) {
-            // Fallback to simple valid RGB if culori is missing to prevent black exports
             if (typeof culori === 'undefined') return hexToRgb(colorsToUse[0]);
-
             const interpolator = culori.interpolate(colorsToUse, 'oklch');
             const colorObj = interpolator(t);
             const rgb = culori.converter('rgb')(colorObj);
-            
-            // SANITIZER: Catch NaN/Undefined and Clamp
             const r = (rgb.r !== undefined) ? rgb.r * 255 : 0;
             const g = (rgb.g !== undefined) ? rgb.g * 255 : 0;
             const b = (rgb.b !== undefined) ? rgb.b * 255 : 0;
-
             return [
                 Math.max(0, Math.min(255, Math.round(isNaN(r) ? 0 : r))),
                 Math.max(0, Math.min(255, Math.round(isNaN(g) ? 0 : g))),
@@ -473,6 +490,8 @@
             const baseSpacing = parseInt(els.spacing.input.value); 
             const maxSizeInput = parseInt(els.maxSize.input.value);
             const rasterMode = els.rasterMode.value; // 'recursive' or 'linear'
+            const isRandomSize = els.randomSize.checked;
+            const randomStrengthVal = parseInt(els.randomStrength.input.value) / 100; // 0..1
 
             // Recursion Levels Logic
             let maxLevels = 1; 
@@ -604,12 +623,28 @@
                         const intensity = getIntensityAt(cx, cy);
                         
                         if (intensity > 0.05) {
+                            
+                            // Randomness Logic
+                            let scaleMult = 1.0;
+                            if (isRandomSize) {
+                                // Interpolate Range: 
+                                // Strength 0 -> 1.0 ... 1.0
+                                // Strength 1 -> 0.2 ... 4.0
+                                const targetMin = 0.2;
+                                const targetMax = 4.0;
+                                const currentMin = 1.0 + (targetMin - 1.0) * randomStrengthVal;
+                                const currentMax = 1.0 + (targetMax - 1.0) * randomStrengthVal;
+                                
+                                const r = pseudoRandom(cx, cy);
+                                scaleMult = currentMin + (r * (currentMax - currentMin));
+                            }
+
                             points.push({ 
                                 x: cx, y: cy, 
                                 intensity: intensity, 
                                 spacing: baseSpacing, 
                                 level: null, // No level in linear
-                                customScale: linearScaleFactor 
+                                customScale: linearScaleFactor * scaleMult
                             });
                             if (cx < minX) minX = cx; if (cx > maxX) maxX = cx;
                         }
@@ -722,6 +757,7 @@
             
             els.maxLines.display.innerText = els.maxLines.input.value;
             els.connFactor.display.innerText = (parseInt(els.connFactor.input.value) / 10).toFixed(1) + "x";
+            els.randomStrength.display.innerText = els.randomStrength.input.value + "%";
 
             ctx.clearRect(0, 0, width, height);
             if (bgVector) {
@@ -739,7 +775,8 @@
                     ctx.moveTo(line.p1.x, line.p1.y); ctx.lineTo(line.p2.x, line.p2.y); ctx.stroke();
                 });
             }
-            data.points.forEach(p => drawSinglePathPlus(p.x, p.y, p.intensity, p.spacing, data.sizeMode, data.maxSizeFactor, p.color));
+            // Use customScale if present (Linear Mode), else use global maxSizeFactor (Recursive Mode)
+            data.points.forEach(p => drawSinglePathPlus(p.x, p.y, p.intensity, p.spacing, data.sizeMode, (p.customScale !== undefined ? p.customScale : data.maxSizeFactor), p.color));
         }
 
         function exportSVG() {
@@ -766,7 +803,7 @@
             data.points.forEach(p => {
                 let drawScale = p.intensity, opacity = p.intensity.toFixed(2);
                 if (data.sizeMode) { opacity = "1"; drawScale = Math.pow(p.intensity, 1.5); }
-                const d = getPlusPathData(p.x, p.y, drawScale, p.spacing, data.maxSizeFactor);
+                const d = getPlusPathData(p.x, p.y, drawScale, p.spacing, (p.customScale !== undefined ? p.customScale : data.maxSizeFactor));
                 svg += `<path d="${d}" fill="rgb(${p.color[0]}, ${p.color[1]}, ${p.color[2]})" ${opacity !== "1" ? `fill-opacity="${opacity}"` : ""} />`;
             });
             svg += `</svg>`;
@@ -783,6 +820,7 @@
             if (Array.isArray(el)) el.forEach(c => c.addEventListener('input', queueRender));
             else if(el.tagName === 'SELECT' || el.type === 'checkbox') el.addEventListener('change', queueRender);
             else if(el.input) el.input.addEventListener('input', queueRender);
+            else if(el.group) {} // skip group container
         });
         canvas.addEventListener('mousedown', (e) => {
             if (!els.bgTool.checked) return;

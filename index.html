@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Matrix Raster Generator - Custom Shape</title>
+    <title>Matrix Raster Generator - Scalable Min Size</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- Culori für OKLCH Interpolation -->
     <script src="https://cdn.jsdelivr.net/npm/culori@3.2.0/bundled/culori.min.js"></script>
@@ -219,6 +219,12 @@
                 <label>Max Größe <span id="maxSizeVal" class="value">90%</span></label>
                 <input type="range" id="maxSizeSlider" min="10" max="300" value="150">
             </div>
+            <!-- Min Größe Slider: Now -100 to 100 -->
+            <div class="control-group">
+                <label>Min. Größe <span id="minSizeVal" class="value">0%</span></label>
+                <input type="range" id="minSizeSlider" min="-100" max="100" value="0">
+            </div>
+
             <div class="row">
                 <label for="sizeModeCheck" class="lbl-inline" style="font-weight:normal; color:#94a3b8;">Helligkeit = Scale</label>
                 <input type="checkbox" id="sizeModeCheck" checked>
@@ -366,6 +372,7 @@
             hardness: { input: document.getElementById('hardnessSlider'), display: document.getElementById('hardnessVal') },
             spacing: { input: document.getElementById('spacingSlider'), display: document.getElementById('spacingVal') },
             maxSize: { input: document.getElementById('maxSizeSlider'), display: document.getElementById('maxSizeVal') },
+            minSize: { input: document.getElementById('minSizeSlider'), display: document.getElementById('minSizeVal') },
             noise: { input: document.getElementById('noiseSlider'), display: document.getElementById('noiseVal') },
             sizeMode: document.getElementById('sizeModeCheck'),
             rasterMode: document.getElementById('rasterModeSelect'),
@@ -520,9 +527,10 @@
         function getRenderData() {
             const baseSpacing = parseInt(els.spacing.input.value); 
             const maxSizeInput = parseInt(els.maxSize.input.value);
-            const rasterMode = els.rasterMode.value; // 'recursive' or 'linear'
+            const minSizeInput = parseInt(els.minSize.input.value) / 100; // -1 to 1
+            const rasterMode = els.rasterMode.value; 
             const isRandomSize = els.randomSize.checked;
-            const randomStrengthVal = parseInt(els.randomStrength.input.value) / 100; // 0..1
+            const randomStrengthVal = parseInt(els.randomStrength.input.value) / 100; 
 
             // Recursion Levels Logic
             let maxLevels = 1; 
@@ -536,7 +544,6 @@
             const connFactor = parseInt(els.connFactor.input.value) / 10; 
             const maxLines = parseInt(els.maxLines.input.value);
             
-            // Adjust ConnDist based on mode
             let connDist = baseSpacing * connFactor;
             if (rasterMode === 'recursive') {
                 connDist *= (1 + maxLevels * 0.5);
@@ -613,10 +620,7 @@
             const points = [];
             let minX = Infinity, maxX = -Infinity;
 
-            // --- POINT GENERATION STRATEGY ---
-            
             if (rasterMode === 'recursive') {
-                // QUADTREE RECURSIVE
                 function processRect(x, y, size, level) {
                     const cx = x + size / 2; const cy = y + size / 2;
                     const intensity = getIntensityAt(cx, cy);
@@ -640,11 +644,8 @@
                 for(let i=0; i<cols; i++) for(let j=0; j<rows; j++) processRect(i*startSize, j*startSize, startSize, maxLevels);
 
             } else {
-                // LINEAR GRID
                 const cols = Math.ceil(width / baseSpacing);
                 const rows = Math.ceil(height / baseSpacing);
-                
-                // Linear scaling factor (maxSize slider usage adaptation)
                 const linearScaleFactor = maxSizeInput / 100;
 
                 for(let i=0; i<cols; i++) {
@@ -654,27 +655,20 @@
                         const intensity = getIntensityAt(cx, cy);
                         
                         if (intensity > 0.05) {
-                            
-                            // Randomness Logic
                             let scaleMult = 1.0;
                             if (isRandomSize) {
-                                // Interpolate Range: 
-                                // Strength 0 -> 1.0 ... 1.0
-                                // Strength 1 -> 0.2 ... 4.0
                                 const targetMin = 0.2;
                                 const targetMax = 4.0;
                                 const currentMin = 1.0 + (targetMin - 1.0) * randomStrengthVal;
                                 const currentMax = 1.0 + (targetMax - 1.0) * randomStrengthVal;
-                                
                                 const r = pseudoRandom(cx, cy);
                                 scaleMult = currentMin + (r * (currentMax - currentMin));
                             }
-
                             points.push({ 
                                 x: cx, y: cy, 
                                 intensity: intensity, 
                                 spacing: baseSpacing, 
-                                level: null, // No level in linear
+                                level: null, 
                                 customScale: linearScaleFactor * scaleMult
                             });
                             if (cx < minX) minX = cx; if (cx > maxX) maxX = cx;
@@ -683,24 +677,19 @@
                 }
             }
 
-            // --- COLOR ASSIGNMENT ---
             const rangeX = maxX - minX || 1; 
 
             points.forEach(p => {
                 let ptColor = activeRgb[0]; 
-
                 if (isRandom) {
                     const randVal = pseudoRandom(p.x * 0.1, p.y * 0.1);
                     ptColor = activeRgb[Math.floor(randVal * 5)];
-                } 
-                else if (isCloud) {
+                } else if (isCloud) {
                     ptColor = getLinearGradientColor(cloudNoise(p.x, p.y), activeRgb);
-                } 
-                else if (isGradient) {
+                } else if (isGradient) {
                     let t = (p.x - minX) / rangeX; 
                     ptColor = getOklchGradientColor(Math.max(0, Math.min(1, t)), gradientHexArray);
-                } 
-                else if (isIntensity) {
+                } else if (isIntensity) {
                     let t;
                     if (rasterMode === 'recursive') {
                         let maxL = maxLevels > 0 ? maxLevels : 1;
@@ -720,7 +709,7 @@
                 finalMaxSizeFactor = maxSizeInput / 100; 
             }
 
-            return { points, sizeMode, width, height, maxSizeFactor: finalMaxSizeFactor, showConn, connDist, randomConn, maxLines };
+            return { points, sizeMode, width, height, maxSizeFactor: finalMaxSizeFactor, minSizeFactor: minSizeInput, showConn, connDist, randomConn, maxLines };
         }
 
         function calculateConnections(data) {
@@ -743,19 +732,20 @@
             return lines;
         }
 
-        // SVG Path String Generator based on Normalized Custom Shape
-        function getPlusPathData(x, y, scale, spacing, maxSizeFactor) {
+        function getPlusPathData(x, y, scale, spacing, maxSizeFactor, minSizeFactor) {
             const maxSize = spacing * maxSizeFactor; 
-            const size = maxSize * scale;
+            const minSize = spacing * minSizeFactor;
             
-            // Build path d="..."
-            // M x1 y1 L x2 y2 ... Z
-            if (NORMALIZED_SHAPE.length === 0) return "";
+            // Map Scale (0..1) to Range (minSize..maxSize)
+            // Note: minSize can be negative (acting as threshold)
+            let size = minSize + (maxSize - minSize) * scale;
+            if (size < 0) size = 0;
+            
+            if (NORMALIZED_SHAPE.length === 0 || size <= 0.01) return "";
             
             let d = "";
             for(let i=0; i<NORMALIZED_SHAPE.length; i++) {
                 const p = NORMALIZED_SHAPE[i];
-                // Transform: x + p.x * size, y + p.y * size
                 const px = x + p.x * size;
                 const py = y + p.y * size;
                 if (i === 0) d += `M ${px} ${py} `;
@@ -765,18 +755,21 @@
             return d;
         }
 
-        // Canvas Draw based on Normalized Custom Shape
-        function drawSinglePathPlus(x, y, scale, spacing, sizeMode, maxSizeFactor, colorRgb) {
-            ctx.beginPath();
+        function drawSinglePathPlus(x, y, scale, spacing, sizeMode, maxSizeFactor, colorRgb, minSizeFactor) {
             let drawScale = scale; 
             let alpha = scale;
             if (sizeMode) { alpha = 1.0; drawScale = Math.pow(scale, 1.5); }
             
+            const maxSize = spacing * maxSizeFactor; 
+            const minSize = spacing * minSizeFactor;
+            
+            // Map DrawScale (0..1) to Range (minSize..maxSize)
+            let size = minSize + (maxSize - minSize) * drawScale;
+            if (size <= 0) return;
+
+            ctx.beginPath();
             ctx.fillStyle = `rgba(${colorRgb[0]}, ${colorRgb[1]}, ${colorRgb[2]}, ${alpha})`;
             
-            const maxSize = spacing * maxSizeFactor; 
-            const size = maxSize * drawScale;
-
             if (NORMALIZED_SHAPE.length > 0) {
                 const p0 = NORMALIZED_SHAPE[0];
                 ctx.moveTo(x + p0.x * size, y + p0.y * size);
@@ -810,6 +803,7 @@
                 els.maxSize.display.innerText = (mS / 100).toFixed(1) + "x";
             }
             
+            els.minSize.display.innerText = els.minSize.input.value + "%";
             els.maxLines.display.innerText = els.maxLines.input.value;
             els.connFactor.display.innerText = (parseInt(els.connFactor.input.value) / 10).toFixed(1) + "x";
             els.randomStrength.display.innerText = els.randomStrength.input.value + "%";
@@ -831,7 +825,7 @@
                 });
             }
             // Use customScale if present (Linear Mode), else use global maxSizeFactor (Recursive Mode)
-            data.points.forEach(p => drawSinglePathPlus(p.x, p.y, p.intensity, p.spacing, data.sizeMode, (p.customScale !== undefined ? p.customScale : data.maxSizeFactor), p.color));
+            data.points.forEach(p => drawSinglePathPlus(p.x, p.y, p.intensity, p.spacing, data.sizeMode, (p.customScale !== undefined ? p.customScale : data.maxSizeFactor), p.color, data.minSizeFactor));
         }
 
         function exportSVG() {
@@ -858,8 +852,8 @@
             data.points.forEach(p => {
                 let drawScale = p.intensity, opacity = p.intensity.toFixed(2);
                 if (data.sizeMode) { opacity = "1"; drawScale = Math.pow(p.intensity, 1.5); }
-                const d = getPlusPathData(p.x, p.y, drawScale, p.spacing, (p.customScale !== undefined ? p.customScale : data.maxSizeFactor));
-                svg += `<path d="${d}" fill="rgb(${p.color[0]}, ${p.color[1]}, ${p.color[2]})" ${opacity !== "1" ? `fill-opacity="${opacity}"` : ""} />`;
+                const d = getPlusPathData(p.x, p.y, drawScale, p.spacing, (p.customScale !== undefined ? p.customScale : data.maxSizeFactor), data.minSizeFactor);
+                if (d) svg += `<path d="${d}" fill="rgb(${p.color[0]}, ${p.color[1]}, ${p.color[2]})" ${opacity !== "1" ? `fill-opacity="${opacity}"` : ""} />`;
             });
             svg += `</svg>`;
             const blob = new Blob([svg], {type: "image/svg+xml;charset=utf-8"});
